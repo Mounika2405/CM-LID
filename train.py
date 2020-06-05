@@ -26,16 +26,9 @@ parser.add_argument('-cf', '--ckpt_freq', type=int, default=1, required=False, \
                         help='Frequency of saving the model')
 
 def compute_accuracy(y_pred, y_target):
-
-
-
     y_pred_indices = torch.max(y_pred, dim=1).indices
-    n_correct = torch.eq(y_pred_indices, y_target).sum(dim=1)
-
-
-    n_acc = torch.mean(torch.div(n_correct.float(), y_pred_indices.shape[1]).float())
-
-    return n_acc * 100
+    n_correct = torch.eq(y_pred_indices, y_target).sum().item()
+    return n_correct / len(y_pred_indices) * 100
 
 def plot_results(args, train_results, val_results, type):
     plt.figure(figsize=(8,8))
@@ -52,14 +45,13 @@ def main():
     args = parser.parse_args()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
     embedding_dim = args.embed_dim #check
     hidden_dim = 256
     vocab_size = args.vocab_size #check
 
-    lid = LID(embedding_dim, hidden_dim, vocab_size, device)
+    lid = LID(embedding_dim, hidden_dim, vocab_size)
     if torch.cuda.device_count() > 1:
-        print("Using", torch.cuda.device_count(), "GPUs for Watch model!")
+        print("Using", torch.cuda.device_count(), "GPUs for LID  model!")
         watch = nn.DataParallel(lid)
     else:
         print("Using single GPU")
@@ -69,27 +61,22 @@ def main():
     test_dataset = CMDataset(args.test_data_path)
 
     #The network is trained per-token with cross-entropy loss
-
-
     criterion = nn.CrossEntropyLoss(ignore_index=10)
     momentum=0.9 #incomplete #check
-    optimizer = torch.optim.ASGD(lid.parameters(), lr=args.lr)
+    optimizer = torch.optim.SGD(lid.parameters(), lr=args.lr)
     decayRate = 0.96 #incomplete #check
     lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer=optimizer, gamma=decayRate)
 
     epoch_resume=0
     if(args.resume):
-        checkpoint = torch.load(args.resume)
-        
+        checkpoint = torch.load(args.resume) 
         epoch_resume = checkpoint['epoch']
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         loss = checkpoint['loss']
-
         print("Model resumed for training...")
-        # print("Epoch: ", epoch_resume)
-        # print("Loss: ", loss)
 
+    print(lid)
     model_params = sum(p.numel() for p in lid.parameters() if p.requires_grad)
     print("Model parameters: ", model_params)
 
@@ -97,7 +84,6 @@ def main():
     val_losses = []
     train_acc = []
     val_acc = []
-    
 
     for epoch in range(epoch_resume+1, args.num_epochs+1):
 
@@ -121,26 +107,22 @@ def main():
             inputs = inputs.to(device)
 
             y_pred = lid(inputs)
+
             target = batch_dict[1].long()
-            target = target.view(y_pred.shape[0], y_pred.shape[1])
             target = target.to(device)
-            # print(y_pred)
-            # print(target.shape)
-            y_pred = y_pred.permute(0, 2, 1).float()
+
             loss = criterion(y_pred, target)
 
             loss_t = loss.item()
             train_loss += (loss_t - train_loss) / (batch_index + 1) #check
 
-            loss.backward()
-            
+            loss.backward()            
             optimizer.step()
 
             accuracy_t = compute_accuracy(y_pred, target)
             train_accuracy += (accuracy_t - train_accuracy) / (batch_index + 1)
 
         train_losses.append(train_loss)
-
         train_acc.append(train_accuracy)
         
         #Iterate over validation set
@@ -154,29 +136,21 @@ def main():
             #Compute the output
             inputs = batch_dict[0].data
             inputs = inputs.to(device)
-
             y_pred = lid(inputs)
-            y_pred = y_pred.view(y_pred.shape[0], 1, y_pred.shape[1])
-            y_pred = y_pred.permute(0, 2, 1).float()
+
             target = batch_dict[1].long()
-            target = target.view(y_pred.shape[0], y_pred.shape[2])
             target = target.to(device)
             
             #Compute loss
             loss = criterion(y_pred, target)
-            
             loss_t = loss.item()
             val_loss += (loss_t - val_loss) / (batch_index + 1) #check
-
-            loss.backward()
-            
-            optimizer.step()
 
             accuracy_t = compute_accuracy(y_pred, target)
             val_accuracy += (accuracy_t - val_accuracy) / (batch_index + 1)
 
-            progress_bar.set_postfix(train_loss=train_loss, val_loss=val_loss, train_acc=train_accuracy.item(),
-                val_acc=val_accuracy.item())
+            progress_bar.set_postfix(train_loss=train_loss, val_loss=val_loss, train_acc=train_accuracy,
+                val_acc=val_accuracy)
             progress_bar.refresh()
 
         val_losses.append(val_loss)
@@ -191,11 +165,8 @@ def main():
                     'loss': (train_loss / len(train_generator))
             }, 'model.pt')
         
-
     plot_results(args, train_losses, val_losses, type='Loss')
     plot_results(args, train_acc, val_acc, type='Accuracy')
-
-
 
 if __name__ == '__main__':
     main()
