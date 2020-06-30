@@ -1,44 +1,67 @@
-import ast
 import torch
 import torch.nn as nn
-from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 from torch.utils.data import DataLoader
+import pandas as pd
+from os import listdir
+import numpy as np
+from collections import Counter
 
 class CMDataset():
     
-    def __init__(self, data_path):
-        self.data_path = data_path
-        with open(self.data_path, 'r') as f:
-            d = f.read()
-        self.data_dict = ast.literal_eval(d) #To consider d as type dictionary 
+    def __init__(self, ngrams_path, labels, vocab_path):
+        self.ngrams_path = ngrams_path
+        self.labels = pd.read_pickle(labels).lang
+
+        self.vocab_path = vocab_path
+        self.ngrams = [] 
+        self.vocab_idx = [] 
+
+        for i, j in zip(sorted(listdir(ngrams_path)), sorted(listdir(vocab_path))):
+            self.ngrams.append(pd.read_pickle(ngrams_path + i))
+            self.vocab_idx.append(pd.read_pickle(vocab_path + j))
     
     def __len__(self):
-        return len(self.data_dict['text'])
+        return len(self.labels)
 
     def __getitem__(self, index):
-
-        x = torch.tensor(self.data_dict['text'][index], dtype=torch.float)
-        y = torch.tensor(self.data_dict['labels'][index])
-        
+        dim = [240, 1000, 5000, 5000]
+        x = preprocess(self.ngrams, index, self.vocab_idx, dim)
+        y = np.where(self.labels.iloc[index]=='hin', 0, 1)
         return x, y
 
-def collate_pad(batch):
+
+def preprocess(ngrams, index, vocab, N):
+    vecs = []
+    for ng, v, dim in zip(ngrams, vocab, N):
+ 
+        hashed_vec = hash(ng.iloc[index], v, dim)
+        vecs.append(hashed_vec)
+    vecs = np.hstack(vecs)
+    return vecs
+        
+def hash(ng, v, dim):
+    x = np.zeros(dim)
+    count = dict(Counter(ng))
+
+    for f in set(ng):
+        h = v[f]
+        idx = h % dim
+                     
+#         if ξ(f) == 1:
+#             x[idx] += 1
+#         else:
+        x[idx] += (count[f]/len(ng)) 
+    return x
+
+# def collate_pad(batch):
     
-    text = [item[0] for item in batch]
-    labels = [item[1] for item in batch]
-    # print('text[0]',text[0].shape)
-    # sizes = []
-    # for t in text:
-    #     sizes.append(t.shape[0])
-    # lengths = [len(text)] * max(sizes)
+#     text = [item[0] for item in batch]
+#     labels = [item[1] for item in batch]
+#     return text, labels
 
-    # text = pad_sequence(text, batch_first=True, padding_value=20) #check #padval
-    # labels = pad_sequence(labels, batch_first=True, padding_value=0.5) #check #padval
+def generate_batches(dataset, batch_size, sampler):
 
-    return text, labels
-
-def generate_batches(dataset, batch_size):
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, sampler=sampler)
     return dataloader
 
 
