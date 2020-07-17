@@ -1,7 +1,7 @@
 import argparse
 import torch
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
-from dataloader import preprocess, hash
+from dataloader import CMDataset, hash
 import pandas as pd
 import numpy as np
 from os import listdir
@@ -34,32 +34,26 @@ def compute_confusion_matrix(y_pred, y_target):
     np.set_printoptions(suppress=True)
     df_cm = pd.DataFrame(cm, index = [i for i in ['Hindi', 'English']],
                   columns = [i for i in ['Hindi', 'English']])
-
     sns.heatmap(df_cm, annot=True, fmt='g')
-    plt.savefig('confusion_matrix-test-dictdata.png')
+    plt.savefig('confusion_matrix-ytbi.png')
     print('Saved confusion matrix!')
 
 def predict(data, target):
-
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     embedding_dim = 256
     hidden_dim = 256
-    input_dim  = 10897
+    input_dim  = 10899
 
     lid = LID(embedding_dim, hidden_dim, input_dim)
-
     ckpt = torch.load(args.model_path)
     lid.load_state_dict(ckpt['model_state_dict'])
     lid.to(device)
-
     lid.eval()
 
     data = data.to(device)
-    pred = lid(data)
-    
+    pred = lid(data) 
     y_pred = torch.max(pred, dim=1).indices
-
 
     accuracy, precision, recall, f1 = compute_metrics(y_pred.cpu(), target)
     print('Accuracy: %f' % accuracy)
@@ -68,18 +62,15 @@ def predict(data, target):
     print('F1 score: %f' % f1)
 
     compute_confusion_matrix(y_pred.cpu(), target)
-
     return y_pred.cpu()
 
 
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-
     parser.add_argument('--model_path', help='Path of saved model')
     parser.add_argument('--data_path', help='Path for ngrams')
     parser.add_argument('--vocab_path', help='Vocabulary path')
-
     args = parser.parse_args()
 
     vocab_idx = [] 
@@ -87,19 +78,18 @@ if __name__ == '__main__':
         vocab_idx.append(pd.read_pickle(args.vocab_path + i))
 
     data = pd.read_pickle(args.data_path)
-    ngrams = [data['unigram'], data['bigram'], data['trigram'], data['4gram']]
+    # ngrams = [data['1gram'], data['2gram'], data['3gram'], data['4gram']]
     labels = data.lang
     word = data.word
-
-    dim = [43, 854, 5000, 5000]
     
-    features = [preprocess(ngrams, index, vocab_idx, dim) for index in range(len(data))]
-    labels = np.where(labels == 'hin', 0, 1)
+    prepare_data = CMDataset(args.data_path, args.vocab_path, is_train=False)
+    dim = [43, 854, 5000, 5000]
+    features = [prepare_data.preprocess(index, dim) for index in range(len(data))]
+    labels = np.where((labels == 'hin') | (labels == 'Hin') , 0, 1)
 
     pred = predict(torch.tensor(features).float(), torch.tensor(labels).long())
-
     results = pd.DataFrame(list(zip(word, labels, pred.numpy())), columns = ['Word', 'Actual', 'Predicted'])
-    results.to_csv('results-test-dictdata.csv', index=False)
+    results.to_csv('results-ytbi.csv', index=False)
 
 
 
